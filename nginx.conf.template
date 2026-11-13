@@ -1,0 +1,47 @@
+# Rendered by railway-entrypoint.sh into /tmp/nginx.conf. __PORT__ is Railway's injected PORT, __CRED__ is base64(user:password).
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+worker_processes 1;
+
+events { worker_connections 256; }
+
+http {
+    access_log off;
+    client_body_temp_path /tmp/nginx-body;
+    proxy_temp_path /tmp/nginx-proxy;
+    fastcgi_temp_path /tmp/nginx-fastcgi;
+    uwsgi_temp_path /tmp/nginx-uwsgi;
+    scgi_temp_path /tmp/nginx-scgi;
+    client_max_body_size 1m;
+    # IPv4 and IPv6: Railway's private network is IPv6-only and the edge may dial either
+    server {
+        listen __PORT__;
+        listen [::]:__PORT__;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+        proxy_read_timeout 120s;
+
+        # unauthenticated liveness only; it reveals nothing but a timestamp
+        location = /health {
+            proxy_pass http://127.0.0.1:3000;
+        }
+
+        location / {
+            if ($http_authorization != "Basic __CRED__") {
+                return 401;
+            }
+            proxy_pass http://127.0.0.1:3000;
+        }
+
+        error_page 401 @unauthorized;
+        location @unauthorized {
+            add_header WWW-Authenticate 'Basic realm="Networking Toolbox"' always;
+            default_type application/json;
+            return 401 '{"error":"unauthorized","hint":"HTTP Basic auth, user admin, password from the TOOLBOX_PASSWORD variable"}';
+        }
+    }
+}
